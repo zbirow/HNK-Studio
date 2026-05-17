@@ -16,7 +16,7 @@ import { getGameOptions, getProvider } from "../providers/index.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_PATH = path.join(process.cwd(), "config.json");
-const DEBUG = true;
+const DEBUG = false;
 
 let mainWindow = null;
 let currentSession = null;
