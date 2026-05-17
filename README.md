@@ -13,6 +13,9 @@ Modular Node.js desktop tool for HNK files.
 
 ## Install
 
+Download Repo
+
+or
 ```bash
 git clone https://github.com/zbirow/HNK-Studio.git
 ```
