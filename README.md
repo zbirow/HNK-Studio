@@ -2,12 +2,20 @@
 
 Modular Node.js desktop tool for HNK files.
 
+![](https://github.com/zbirow/HNK-Studio/blob/main/hnk_studio.png)
+
 ## Current shape
 
 - Select a game provider first.
 - Open an `.hnk` file after the provider is selected.
-- Browse records grouped into a left-side tree, similar to the old Python viewer.
 - Keep common HNK parsing, record names, texture header parsing, and game-specific providers separate.
+- Click right-mouse to folder to export all files from folder.
+
+## Install
+
+```bash
+gti clone https://github.com/zbirow/HNK-Studio.git
+```
 
 ## Run
 
