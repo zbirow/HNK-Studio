@@ -1,0 +1,12 @@
+node_modules/
+.npm-cache/
+.electron-cache/
+dist/
+out/
+*.log
+config.json
+*.hnk
+*.dat
+*.raw
+*.files
+.DS_Store

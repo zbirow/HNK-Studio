@@ -1,0 +1,17 @@
+{
+  "name": "hnk-studio",
+  "version": "0.1.0",
+  "description": "Modular HNK file viewer and extractor.",
+  "type": "module",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node scripts/check-syntax.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5"
+  }
+}
