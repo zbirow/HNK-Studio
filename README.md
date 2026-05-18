@@ -4,6 +4,9 @@ Modular Node.js desktop tool for HNK files.
 
 ![](https://github.com/zbirow/HNK-Studio/blob/main/hnk_studio.png)
 
+## Info
+The program is still in development, and some features may not work. Please report any problems or questions to [Issues](https://github.com/zbirow/HNK-Studio/issues).
+
 ## Current shape
 
 - Select a game provider first.
