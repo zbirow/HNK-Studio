@@ -35,6 +35,10 @@ export function decodeTextureToRgba(textureData, texture) {
     return decodeCmpr(textureData, texture.width, texture.height);
   }
 
+  if (format === "BGRA8888") {
+    return decodeWiiBgra8888(textureData, texture.width, texture.height);
+  }
+
   if (format === "R8G8B8A8") {
     return Buffer.from(textureData.subarray(0, texture.width * texture.height * 4));
   }
@@ -59,6 +63,10 @@ function normalizeFormat(format) {
 
   if (upper.includes("R8G8B8A8")) {
     return "R8G8B8A8";
+  }
+
+  if (upper.includes("BGRA8888") || upper.includes("B8G8R8A8")) {
+    return "BGRA8888";
   }
 
   return upper;
@@ -163,6 +171,44 @@ function decodeCmpr(data, width, height) {
     for (let part = 0; part < 4; part += 1) {
       const [dx, dy] = offsets[part];
       decodeDxt1Block(block.subarray(part * 8, part * 8 + 8), blockX * 8 + dx, blockY * 8 + dy, width, height, rgba, null, true, true);
+    }
+  }
+
+  return rgba;
+}
+
+function decodeWiiBgra8888(data, width, height) {
+  const rgba = Buffer.alloc(width * height * 4);
+  let offset = 0;
+
+  for (let tileY = 0; tileY < height; tileY += 4) {
+    for (let tileX = 0; tileX < width; tileX += 4) {
+      if (offset + 64 > data.length) {
+        return rgba;
+      }
+
+      for (let py = 0; py < 4; py += 1) {
+        for (let px = 0; px < 4; px += 1) {
+          const targetX = tileX + px;
+          const targetY = tileY + py;
+
+          if (targetX >= width || targetY >= height) {
+            continue;
+          }
+
+          const pixelIndex = py * 4 + px;
+          const arOffset = offset + pixelIndex * 2;
+          const gbOffset = offset + 32 + pixelIndex * 2;
+          const outputOffset = (targetY * width + targetX) * 4;
+
+          rgba[outputOffset] = data[arOffset + 1];
+          rgba[outputOffset + 1] = data[gbOffset];
+          rgba[outputOffset + 2] = data[gbOffset + 1];
+          rgba[outputOffset + 3] = data[arOffset];
+        }
+      }
+
+      offset += 64;
     }
   }
 
