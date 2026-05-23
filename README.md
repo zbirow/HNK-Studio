@@ -1,5 +1,8 @@
 # HNK Studio
 
+
+[**Wiki**](https://github.com/zbirow/HNK-Studio/wiki)
+
 Modular Node.js desktop tool for HNK files.
 
 ![](https://github.com/zbirow/HNK-Studio/blob/main/hnk_studio.png)
