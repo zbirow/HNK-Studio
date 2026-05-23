@@ -42,7 +42,7 @@ function parseStandardWiiHeader(data) {
   const marker = data.subarray(0, 2).toString("hex").toUpperCase();
   const formatMap = new Map([
     ["A1BC", "CMPR"],
-    ["E978", "Unknown CMPR-like"]
+    ["E978", "BGRA8888"]
   ]);
 
   return {
