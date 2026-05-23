@@ -14,6 +14,12 @@ The program is still in development, and some features may not work. Please repo
 - Keep common HNK parsing, record names, texture header parsing, and game-specific providers separate.
 - Click right-mouse to folder to export all files from folder.
 
+### Features
+* Texture Viewer and Export
+* Audio player end Export
+* 3D model/ Viewer and Export
+* Skeleton/Rig Viewer
+* Sprites Viewer
 
 # Update 0.1.1
 
