@@ -50,3 +50,9 @@ On Windows PowerShell, if `npm` is blocked by script policy, use:
 npm.cmd install
 npm.cmd start
 ```
+
+## Another Tools for HNK files
+
+[Torus Tools](https://github.com/desuex/torus-tools) - By Desuex
+
+[Noesis Plugin (Wii 3D Model)](https://github.com/Durik256/Noesis-Plugins/blob/master/fmt_MonsterHigh.py) - By Durik256
