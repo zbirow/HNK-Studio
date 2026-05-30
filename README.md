@@ -28,6 +28,10 @@ The program is still in development, and some features may not work. Please repo
 
 *Add Support BGRA8888 Wii Format
 
+# Update 0.1.2
+
+* Add Support Wii 3D Model
+
 ## Install
 
 Download Repo
