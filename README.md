@@ -24,11 +24,12 @@ The program is still in development, and some features may not work. Please repo
 * Skeleton/Rig Viewer
 * Sprites Viewer
 
-# Update 0.1.1
+# Update
+## Update 0.1.1
 
 *Add Support BGRA8888 Wii Format
 
-# Update 0.1.2
+## Update 0.1.2
 
 * Add Support Wii 3D Model
 
