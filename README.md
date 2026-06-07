@@ -61,3 +61,5 @@ npm.cmd start
 [Torus Tools](https://github.com/desuex/torus-tools) - By Desuex
 
 [Noesis Plugin (Wii 3D Model)](https://github.com/Durik256/Noesis-Plugins/blob/master/fmt_MonsterHigh.py) - By Durik256
+
+[QuickBMS](https://aluigi.altervista.org/quickbms.htm) - By Luigi Auriemma
