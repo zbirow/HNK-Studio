@@ -46,6 +46,105 @@ export function decodeTextureToRgba(textureData, texture) {
   throw new Error(`PNG preview is not supported for texture format ${texture.format}.`);
 }
 
+export function decodeDdsToRgba(ddsData) {
+  const dds = Buffer.from(ddsData);
+
+  if (dds.length < 128 || dds.toString("ascii", 0, 4) !== "DDS ") {
+    throw new Error("Selected file is not a valid DDS texture.");
+  }
+
+  const headerSize = dds.readUInt32LE(4);
+  const pixelFormatSize = dds.readUInt32LE(76);
+
+  if (headerSize !== 124 || pixelFormatSize !== 32) {
+    throw new Error("DDS header is not supported.");
+  }
+
+  const height = dds.readUInt32LE(12);
+  const width = dds.readUInt32LE(16);
+  const pixelFormatFlags = dds.readUInt32LE(80);
+  const fourCc = dds.toString("ascii", 84, 88).replace(/\0+$/u, "");
+  const rgbBitCount = dds.readUInt32LE(88);
+  const masks = {
+    r: dds.readUInt32LE(92),
+    g: dds.readUInt32LE(96),
+    b: dds.readUInt32LE(100),
+    a: dds.readUInt32LE(104)
+  };
+  let dataOffset = 128;
+  let format = fourCc || "RGBA";
+  let rgba = null;
+
+  if ((pixelFormatFlags & 0x4) !== 0) {
+    if (fourCc === "DX10") {
+      if (dds.length < 148) {
+        throw new Error("DDS DX10 header is incomplete.");
+      }
+
+      const dxgiFormat = dds.readUInt32LE(128);
+      dataOffset = 148;
+      ({ format, rgba } = decodeDx10Dds(dds.subarray(dataOffset), width, height, dxgiFormat));
+    } else if (fourCc === "DXT1") {
+      rgba = decodeDxt1(dds.subarray(dataOffset), width, height);
+    } else if (fourCc === "DXT5") {
+      rgba = decodeDxt5(dds.subarray(dataOffset), width, height);
+    } else {
+      throw new Error(`DDS compression ${fourCc || "unknown"} is not supported.`);
+    }
+  } else if ((pixelFormatFlags & 0x40) !== 0 || rgbBitCount > 0) {
+    rgba = decodeUncompressedDds(dds.subarray(dataOffset), width, height, rgbBitCount, masks);
+    format = `${rgbBitCount}-bit RGBA`;
+  } else {
+    throw new Error("DDS pixel format is not supported.");
+  }
+
+  return { width, height, format, rgba };
+}
+
+export function encodeRgbaToTextureData(rgba, texture) {
+  const format = normalizeFormat(texture.format);
+  const width = texture.width;
+  const height = texture.height;
+
+  if (rgba.length !== width * height * 4) {
+    throw new Error("RGBA buffer size does not match the texture dimensions.");
+  }
+
+  if (format === "DXT1") {
+    return encodeDxt1(rgba, width, height);
+  }
+
+  if (format === "DXT5") {
+    return encodeDxt5(rgba, width, height);
+  }
+
+  if (format === "R8G8B8A8") {
+    return Buffer.from(rgba);
+  }
+
+  throw new Error(`Texture editing is not supported for texture format ${texture.format}.`);
+}
+
+export function getTextureDataSize(texture) {
+  const format = normalizeFormat(texture.format);
+  const blocksWide = Math.max(1, Math.ceil(texture.width / 4));
+  const blocksHigh = Math.max(1, Math.ceil(texture.height / 4));
+
+  if (format === "DXT1") {
+    return blocksWide * blocksHigh * 8;
+  }
+
+  if (format === "DXT5") {
+    return blocksWide * blocksHigh * 16;
+  }
+
+  if (format === "R8G8B8A8") {
+    return texture.width * texture.height * 4;
+  }
+
+  return null;
+}
+
 function normalizeFormat(format) {
   const upper = String(format ?? "").toUpperCase();
 
@@ -70,6 +169,291 @@ function normalizeFormat(format) {
   }
 
   return upper;
+}
+
+function encodeDxt1(rgba, width, height) {
+  const output = Buffer.alloc(getCompressedTextureDataSize(width, height, 8));
+  let outputOffset = 0;
+
+  for (let y = 0; y < height; y += 4) {
+    for (let x = 0; x < width; x += 4) {
+      encodeDxtColorBlock(rgba, width, height, x, y).copy(output, outputOffset);
+      outputOffset += 8;
+    }
+  }
+
+  return output;
+}
+
+function encodeDxt5(rgba, width, height) {
+  const output = Buffer.alloc(getCompressedTextureDataSize(width, height, 16));
+  let outputOffset = 0;
+
+  for (let y = 0; y < height; y += 4) {
+    for (let x = 0; x < width; x += 4) {
+      encodeDxt5AlphaBlock(rgba, width, height, x, y).copy(output, outputOffset);
+      encodeDxtColorBlock(rgba, width, height, x, y).copy(output, outputOffset + 8);
+      outputOffset += 16;
+    }
+  }
+
+  return output;
+}
+
+function getCompressedTextureDataSize(width, height, blockSize) {
+  return Math.max(1, Math.ceil(width / 4)) * Math.max(1, Math.ceil(height / 4)) * blockSize;
+}
+
+function decodeDx10Dds(data, width, height, dxgiFormat) {
+  if (dxgiFormat === 71 || dxgiFormat === 72) {
+    return { format: "BC1/DXT1", rgba: decodeDxt1(data, width, height) };
+  }
+
+  if (dxgiFormat === 77 || dxgiFormat === 78) {
+    return { format: "BC3/DXT5", rgba: decodeDxt5(data, width, height) };
+  }
+
+  if (dxgiFormat === 28 || dxgiFormat === 29) {
+    return {
+      format: "R8G8B8A8",
+      rgba: decodeUncompressedDds(data, width, height, 32, {
+        r: 0x000000ff,
+        g: 0x0000ff00,
+        b: 0x00ff0000,
+        a: 0xff000000
+      })
+    };
+  }
+
+  if (dxgiFormat === 87 || dxgiFormat === 91) {
+    return {
+      format: "B8G8R8A8",
+      rgba: decodeUncompressedDds(data, width, height, 32, {
+        r: 0x00ff0000,
+        g: 0x0000ff00,
+        b: 0x000000ff,
+        a: 0xff000000
+      })
+    };
+  }
+
+  throw new Error(`DDS DX10 format ${dxgiFormat} is not supported.`);
+}
+
+function decodeUncompressedDds(data, width, height, bitCount, masks) {
+  const bytesPerPixel = bitCount / 8;
+
+  if (!Number.isInteger(bytesPerPixel) || bytesPerPixel < 2 || bytesPerPixel > 4) {
+    throw new Error(`${bitCount}-bit uncompressed DDS textures are not supported.`);
+  }
+
+  const expectedSize = width * height * bytesPerPixel;
+
+  if (data.length < expectedSize) {
+    throw new Error("DDS pixel data is incomplete.");
+  }
+
+  const rgba = Buffer.alloc(width * height * 4);
+
+  for (let index = 0; index < width * height; index += 1) {
+    const value = data.readUIntLE(index * bytesPerPixel, bytesPerPixel);
+    const outputOffset = index * 4;
+    rgba[outputOffset] = extractMaskedChannel(value, masks.r, 0);
+    rgba[outputOffset + 1] = extractMaskedChannel(value, masks.g, 0);
+    rgba[outputOffset + 2] = extractMaskedChannel(value, masks.b, 0);
+    rgba[outputOffset + 3] = masks.a ? extractMaskedChannel(value, masks.a, 255) : 255;
+  }
+
+  return rgba;
+}
+
+function extractMaskedChannel(value, mask, fallback) {
+  if (!mask) {
+    return fallback;
+  }
+
+  const shift = countTrailingZeroBits(mask);
+  const bits = countSetBits(mask >>> shift);
+  const raw = ((value & mask) >>> 0) >>> shift;
+  const max = (2 ** bits) - 1;
+
+  if (max <= 0) {
+    return fallback;
+  }
+
+  return Math.round((raw / max) * 255);
+}
+
+function countTrailingZeroBits(value) {
+  let count = 0;
+  let current = value >>> 0;
+
+  while (count < 32 && (current & 1) === 0) {
+    current >>>= 1;
+    count += 1;
+  }
+
+  return count;
+}
+
+function countSetBits(value) {
+  let count = 0;
+  let current = value >>> 0;
+
+  while (current) {
+    count += current & 1;
+    current >>>= 1;
+  }
+
+  return count;
+}
+
+function encodeDxt5AlphaBlock(rgba, width, height, blockX, blockY) {
+  const block = Buffer.alloc(8);
+  const alphas = [];
+
+  for (let py = 0; py < 4; py += 1) {
+    for (let px = 0; px < 4; px += 1) {
+      const x = Math.min(width - 1, blockX + px);
+      const y = Math.min(height - 1, blockY + py);
+      alphas.push(rgba[(y * width + x) * 4 + 3]);
+    }
+  }
+
+  const alpha0 = Math.max(...alphas);
+  const alpha1 = Math.min(...alphas);
+  const table = makeDxt5AlphaTable(alpha0, alpha1);
+  let bits = 0n;
+
+  for (let index = 0; index < alphas.length; index += 1) {
+    const alphaIndex = findNearestAlphaIndex(alphas[index], table);
+    bits |= BigInt(alphaIndex) << BigInt(index * 3);
+  }
+
+  block[0] = alpha0;
+  block[1] = alpha1;
+
+  for (let index = 0; index < 6; index += 1) {
+    block[2 + index] = Number((bits >> BigInt(index * 8)) & 0xffn);
+  }
+
+  return block;
+}
+
+function makeDxt5AlphaTable(alpha0, alpha1) {
+  const table = [alpha0, alpha1];
+
+  if (alpha0 > alpha1) {
+    for (let index = 1; index <= 6; index += 1) {
+      table.push(Math.round(((7 - index) * alpha0 + index * alpha1) / 7));
+    }
+  } else {
+    for (let index = 1; index <= 4; index += 1) {
+      table.push(Math.round(((5 - index) * alpha0 + index * alpha1) / 5));
+    }
+    table.push(0, 255);
+  }
+
+  return table;
+}
+
+function findNearestAlphaIndex(alpha, table) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+
+  for (let index = 0; index < table.length; index += 1) {
+    const distance = Math.abs(alpha - table[index]);
+
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}
+
+function encodeDxtColorBlock(rgba, width, height, blockX, blockY) {
+  const block = Buffer.alloc(8);
+  const pixels = [];
+  const opaquePixels = [];
+
+  for (let py = 0; py < 4; py += 1) {
+    for (let px = 0; px < 4; px += 1) {
+      const x = Math.min(width - 1, blockX + px);
+      const y = Math.min(height - 1, blockY + py);
+      const offset = (y * width + x) * 4;
+      const pixel = [rgba[offset], rgba[offset + 1], rgba[offset + 2], rgba[offset + 3]];
+      pixels.push(pixel);
+
+      if (pixel[3] > 8) {
+        opaquePixels.push(pixel);
+      }
+    }
+  }
+
+  const colorPixels = opaquePixels.length > 0 ? opaquePixels : pixels;
+  const endpoints = findColorEndpoints(colorPixels);
+  let color0 = rgbTo565(endpoints.max);
+  let color1 = rgbTo565(endpoints.min);
+
+  if (color0 < color1) {
+    [color0, color1] = [color1, color0];
+  }
+
+  const colors = makeDxtColors(color0, color1);
+  let codes = 0;
+
+  for (let index = 0; index < pixels.length; index += 1) {
+    const colorIndex = findNearestColorIndex(pixels[index], colors);
+    codes |= colorIndex << (index * 2);
+  }
+
+  block.writeUInt16LE(color0, 0);
+  block.writeUInt16LE(color1, 2);
+  block.writeUInt32LE(codes >>> 0, 4);
+  return block;
+}
+
+function findColorEndpoints(pixels) {
+  let min = [255, 255, 255];
+  let max = [0, 0, 0];
+
+  for (const pixel of pixels) {
+    for (let channel = 0; channel < 3; channel += 1) {
+      min[channel] = Math.min(min[channel], pixel[channel]);
+      max[channel] = Math.max(max[channel], pixel[channel]);
+    }
+  }
+
+  return { min, max };
+}
+
+function findNearestColorIndex(pixel, colors) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+
+  for (let index = 0; index < colors.length; index += 1) {
+    const color = colors[index];
+    const dr = pixel[0] - color[0];
+    const dg = pixel[1] - color[1];
+    const db = pixel[2] - color[2];
+    const distance = dr * dr + dg * dg + db * db;
+
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+}
+
+function rgbTo565(pixel) {
+  const r = Math.round((pixel[0] / 255) * 31) & 0x1f;
+  const g = Math.round((pixel[1] / 255) * 63) & 0x3f;
+  const b = Math.round((pixel[2] / 255) * 31) & 0x1f;
+  return (r << 11) | (g << 5) | b;
 }
 
 function createCompressedDdsHeader(width, height, format) {
