@@ -18,22 +18,30 @@ The program is still in development, and some features may not work. Please repo
 - Click right-mouse to folder to export all files from folder.
 
 ## Features
-* Texture Viewer and Export
+* Texture Viewer, Export and Import(Replace)
 * Audio player end Export
 * 3D model/ Viewer and Export
 * Skeleton/Rig Viewer
-* Sprites Viewer
+* Sprites Viewer and Editor
+* Fonts Tools
 
 # Update
 ## Update 0.1.1
 
-*Add Support BGRA8888 Wii Format
+* Add Support BGRA8888 Wii Format
 
 ## Update 0.1.2
 
 * Add Support Wii 3D Model
 
-## Install
+## Update 0.1.3
+
+- **Repair 3D model Viewer**
+- **Add Import(Replace) Texture Functions**
+- **Add Sprites Editor**
+- **Add Font Editor in Sprites**
+
+# Install
 
 Download Repo
 
@@ -56,7 +64,7 @@ npm.cmd install
 npm.cmd start
 ```
 
-## Another Tools for HNK files
+# Another Tools for HNK files
 
 [Torus Tools](https://github.com/desuex/torus-tools) - By Desuex
 
