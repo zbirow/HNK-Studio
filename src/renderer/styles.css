@@ -358,7 +358,7 @@ select {
   display: flex;
   min-height: 0;
   flex: 1;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   overflow: auto;
   padding: 12px;
@@ -401,6 +401,20 @@ select {
   padding: 0 0 10px;
 }
 
+.model-debug-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 0 10px;
+}
+
+.model-debug-label {
+  color: #9b9b9b;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .mode-button {
   height: 28px;
   border: 1px solid #383838;
@@ -414,6 +428,12 @@ select {
   border-color: #a41613;
   background: #a41613;
   color: #ffffff;
+}
+
+.mode-button:disabled {
+  border-color: #2b2b2b;
+  background: #141414;
+  color: #656565;
 }
 
 .model-info {
@@ -438,8 +458,57 @@ select {
 .sprite-preview-wrap {
   display: grid;
   gap: 12px;
-  place-items: center;
+  align-items: start;
+  justify-items: center;
   width: 100%;
+}
+
+.sprite-preview-wrap.sprite-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #101010;
+  padding: 12px;
+}
+
+.sprite-preview-wrap.sprite-fullscreen.has-font-options {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.sprite-preview-wrap.sprite-fullscreen.has-font-options.has-sample {
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+}
+
+.sprite-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(1100px, 100%);
+}
+
+.sprite-texture-select {
+  min-width: 260px;
+  max-width: 520px;
+  height: 28px;
+  border: 1px solid #383838;
+  border-radius: 4px;
+  background: #171717;
+  color: #e6e6e6;
+  padding: 0 8px;
+}
+
+.sprite-status {
+  min-width: 0;
+  overflow: hidden;
+  color: #9b9b9b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sprite-stage {
@@ -461,8 +530,196 @@ select {
   image-rendering: auto;
 }
 
+.sprite-workspace {
+  display: grid;
+  gap: 12px;
+  width: min(1100px, 100%);
+  min-height: 0;
+}
+
+.sprite-charset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(120px, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: min(1100px, 100%);
+}
+
+.sprite-charset[hidden],
+.sprite-sample[hidden] {
+  display: none;
+}
+
+.sprite-charset-input {
+  min-height: 56px;
+  max-height: 140px;
+  resize: vertical;
+  border: 1px solid #303030;
+  border-radius: 4px;
+  background: #151515;
+  color: #f0f0f0;
+  padding: 7px;
+  font: 12px Consolas, "Cascadia Mono", monospace;
+  line-height: 1.4;
+}
+
+.sprite-sample {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 8px;
+  width: min(1100px, 100%);
+}
+
+.sprite-fullscreen .sprite-charset,
+.sprite-fullscreen .sprite-sample {
+  width: 100%;
+}
+
+.sprite-sample-input {
+  min-height: 54px;
+  resize: vertical;
+  border: 1px solid #303030;
+  border-radius: 4px;
+  background: #151515;
+  color: #f0f0f0;
+  padding: 7px;
+  font: inherit;
+}
+
+.sprite-sample-canvas-wrap {
+  min-height: 54px;
+  overflow: auto;
+  border: 1px solid #242424;
+  background: #050505;
+}
+
+.sprite-sample-canvas {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.sprite-fullscreen .sprite-toolbar,
+.sprite-fullscreen .sprite-workspace {
+  width: 100%;
+}
+
+.sprite-fullscreen .sprite-stage {
+  min-height: 90px;
+}
+
+.sprite-fullscreen .sprite-preview-image {
+  max-height: 86px;
+}
+
+.sprite-fullscreen .sprite-workspace {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sprite-atlas {
+  display: grid;
+  grid-template-rows: auto minmax(0, auto);
+  gap: 6px;
+  width: min(1100px, 100%);
+  min-height: 0;
+}
+
+.sprite-atlas-readout {
+  min-height: 18px;
+  overflow: hidden;
+  color: #d9d9d9;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sprite-atlas-canvas-wrap {
+  display: grid;
+  max-height: 420px;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #242424;
+  background:
+    linear-gradient(45deg, #1b1b1b 25%, transparent 25%),
+    linear-gradient(-45deg, #1b1b1b 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1b1b1b 75%),
+    linear-gradient(-45deg, transparent 75%, #1b1b1b 75%),
+    #101010;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+  place-items: center;
+}
+
+.sprite-atlas-canvas-stack {
+  position: relative;
+  display: block;
+}
+
+.sprite-atlas-canvas {
+  position: absolute;
+  inset: 0;
+  max-width: none;
+  max-height: none;
+  cursor: crosshair;
+  image-rendering: auto;
+}
+
+.sprite-atlas-canvas.pixel-view {
+  image-rendering: pixelated;
+}
+
+.sprite-atlas-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sprite-fullscreen .sprite-atlas {
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sprite-fullscreen .sprite-atlas-canvas-wrap {
+  max-height: none;
+  height: 100%;
+  overflow: auto;
+  place-items: start center;
+}
+
+.sprite-fullscreen .sprite-atlas-canvas {
+  max-width: none;
+  max-height: none;
+}
+
+.sprite-table-wrap {
+  width: min(860px, 100%);
+  max-height: 320px;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #242424;
+}
+
+.sprite-fullscreen .sprite-table-wrap {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  overflow: auto;
+}
+
+.sprite-fullscreen .sprite-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #101010;
+}
+
 .sprite-table {
-  width: min(760px, 100%);
+  width: 100%;
   border-collapse: collapse;
   color: #d9d9d9;
   font-size: 12px;
@@ -489,6 +746,26 @@ select {
 .sprite-table tr:not(:first-child):hover,
 .sprite-table .selected-sprite-row {
   background: #242424;
+}
+
+.sprite-table-input {
+  width: 100%;
+  min-width: 76px;
+  height: 24px;
+  border: 1px solid #303030;
+  border-radius: 3px;
+  background: #151515;
+  color: #f0f0f0;
+  padding: 0 6px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 12px;
+  text-align: right;
+}
+
+.sprite-table-input[data-field="hash"] {
+  min-width: 84px;
+  text-align: left;
+  text-transform: uppercase;
 }
 
 .audio-preview-wrap {
