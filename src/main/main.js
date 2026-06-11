@@ -4,23 +4,24 @@ import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWav, decodeSqueakStreamRaw, extractEmbeddedAudioData, extractExternalRawName, parseAudioMetadata, parseRawiInfo } from "../decoders/audioDecoder.js";
-import { readHnkFile } from "../core/hnkReader.js";
+import { makeHexPreview, readHnkFile } from "../core/hnkReader.js";
 import { buildHnkProject } from "../core/projectLoader.js";
 import { extractModelGeometry } from "../decoders/modelGeometry.js";
 import { findSkeletonForAsset, parseSkeletons } from "../decoders/skeletonDecoder.js";
-import { cropSpriteRgba, parseRenderSprite } from "../decoders/spriteDecoder.js";
+import { cropSpriteRgba, parseRenderSprite, writeRenderSpriteEntries } from "../decoders/spriteDecoder.js";
 import { createObjFromModelRecords } from "../exporters/modelObjExporter.js";
-import { createTextureDataUrl, createTextureDds, createTexturePng, encodeRgbaPng } from "../exporters/textureExporter.js";
+import { createTextureDataUrl, createTextureDds, createTexturePng, decodeDdsToRgba, encodeRgbaPng, encodeRgbaToTextureData, getTextureDataSize } from "../exporters/textureExporter.js";
 import { getGameOptions, getProvider } from "../providers/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const CONFIG_PATH = path.join(process.cwd(), "config.json");
-const DEBUG = false;
+const DEBUG = true;
 
 let mainWindow = null;
 let currentSession = null;
 let debugFindUnknowns = false;
+let debugSkeletonRotationControls = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -115,6 +116,15 @@ function createApplicationMenu() {
             debugFindUnknowns = menuItem.checked;
             mainWindow?.webContents.send("debug:stateChanged", getDebugState());
           }
+        },
+        {
+          label: "Skeleton Rotation Controls",
+          type: "checkbox",
+          checked: debugSkeletonRotationControls,
+          click(menuItem) {
+            debugSkeletonRotationControls = menuItem.checked;
+            mainWindow?.webContents.send("debug:stateChanged", getDebugState());
+          }
         }
       ]
     });
@@ -126,7 +136,8 @@ function createApplicationMenu() {
 function getDebugState() {
   return {
     enabled: DEBUG,
-    findUnknowns: DEBUG && debugFindUnknowns
+    findUnknowns: DEBUG && debugFindUnknowns,
+    skeletonRotationControls: DEBUG && debugSkeletonRotationControls
   };
 }
 
@@ -148,7 +159,7 @@ ipcMain.handle("hnk:open", async (_event, payload) => {
     title: "Select HNK file",
     properties: ["openFile"],
     filters: [
-      { name: "HNK files", extensions: ["hnk"] },
+      { name: "HNK files", extensions: ["hnk", "dat"] },
       { name: "All files", extensions: ["*"] }
     ]
   });
@@ -324,20 +335,34 @@ ipcMain.handle("asset:preview", async (_event, payload) => {
 
   if (asset.category === "RenderModelTemplate") {
     const records = asset.payloadRecordIds.map((recordId) => getRawRecord(recordId)).filter(Boolean);
-    const geometry = extractModelGeometry(records);
     const skeletons = getSkeletons();
     const skeleton = findSkeletonForAsset(skeletons, asset.name);
+    let geometry = null;
+    let modelError = null;
+
+    try {
+      geometry = serializeGeometryForPreview(extractModelGeometry(records));
+    } catch (error) {
+      if (!isMissingModelGeometryError(error)) {
+        throw error;
+      }
+
+      geometry = createEmptyGeometryPreview();
+      modelError = error.message;
+    }
 
     return {
       ok: true,
       kind: "model",
-      geometry: serializeGeometryForPreview(geometry),
+      geometry,
+      meshAvailable: geometry.vertexCount > 0 && geometry.faceCount > 0,
+      modelError,
       skeleton
     };
   }
 
   if (asset.category === "RenderSprite") {
-    const preview = createSpritePreview(asset, payload?.spriteIndex ?? 0);
+    const preview = createSpritePreview(asset, payload?.spriteIndex ?? 0, payload?.textureAssetId);
     return preview ? { ok: true, kind: "sprite", ...preview } : { ok: false };
   }
 
@@ -357,7 +382,7 @@ ipcMain.handle("asset:export", async (_event, payload) => {
   }
 
   if (format === "sprites-png" && target.kind === "asset") {
-    return exportSpritesToDirectory(target.asset);
+    return exportSpritesToDirectory(target.asset, payload?.textureAssetId);
   }
 
   const { buffer, defaultPath, filters } = createExportPayload(target, format);
@@ -415,6 +440,144 @@ ipcMain.handle("asset:exportAll", async (_event, payload) => {
     filePath: result.filePaths[0],
     count,
     errors
+  };
+});
+
+ipcMain.handle("texture:importDds", async (_event, payload) => {
+  const asset = getAsset(payload?.nodeId);
+
+  if (!asset || asset.category !== "TSETexture" || asset.texture?.dataRecordId == null) {
+    throw new Error("Select a texture asset before importing DDS.");
+  }
+
+  const dds = Buffer.from(payload?.dds instanceof ArrayBuffer ? new Uint8Array(payload.dds) : payload?.dds ?? []);
+  const record = getRawRecord(asset.texture.dataRecordId);
+
+  if (!record) {
+    throw new Error("Texture data record was not found.");
+  }
+
+  const directPayload = getDirectDdsPayload(dds, asset.texture, record.size);
+
+  if (directPayload) {
+    await writeTextureRecord(asset, record, directPayload, "direct DDS");
+    return makeTextureImportResult(asset, record, directPayload.length, "direct DDS");
+  }
+
+  const imported = decodeDdsToRgba(dds);
+
+  if (imported.width !== asset.texture.width || imported.height !== asset.texture.height) {
+    throw new Error(`Imported DDS is ${imported.width}x${imported.height}, expected ${asset.texture.width}x${asset.texture.height}.`);
+  }
+
+  const encoded = encodeRgbaToTextureData(imported.rgba, asset.texture);
+  await writeTextureRecord(asset, record, encoded, `DDS ${imported.format}`);
+  return makeTextureImportResult(asset, record, encoded.length, `DDS ${imported.format}`);
+});
+
+ipcMain.handle("texture:saveEdit", async (_event, payload) => {
+  const asset = getAsset(payload?.nodeId);
+
+  if (!asset || asset.category !== "TSETexture" || asset.texture?.dataRecordId == null) {
+    throw new Error("Select a texture asset before saving.");
+  }
+
+  const record = getRawRecord(asset.texture.dataRecordId);
+
+  if (!record) {
+    throw new Error("Texture data record was not found.");
+  }
+
+  const width = Number(payload?.width);
+  const height = Number(payload?.height);
+
+  if (width !== asset.texture.width || height !== asset.texture.height) {
+    throw new Error("Edited image dimensions do not match the source texture.");
+  }
+
+  const rgba = Buffer.from(payload?.rgba instanceof ArrayBuffer ? new Uint8Array(payload.rgba) : payload?.rgba ?? []);
+
+  if (rgba.length !== width * height * 4) {
+    throw new Error("Edited image data has an invalid size.");
+  }
+
+  const encoded = encodeRgbaToTextureData(rgba, asset.texture);
+  await writeTextureRecord(asset, record, encoded, "RGBA image");
+  return makeTextureImportResult(asset, record, encoded.length, "RGBA image");
+});
+
+ipcMain.handle("asset:importDat", async (_event, payload) => {
+  const target = getDatImportTarget(payload?.nodeId);
+  const data = Buffer.from(payload?.data instanceof ArrayBuffer ? new Uint8Array(payload.data) : payload?.data ?? []);
+
+  if (data.length !== target.record.size) {
+    throw new Error(`DAT has ${data.length} bytes, expected ${target.record.size}.`);
+  }
+
+  data.copy(target.record.data);
+  data.copy(currentSession.parsed.buffer, target.record.dataStart);
+  updateSerializedHexPreview(target.record.index);
+  await writeFile(currentSession.parsed.filePath, currentSession.parsed.buffer);
+
+  return {
+    canceled: false,
+    byteLength: data.length,
+    filePath: currentSession.parsed.filePath,
+    hexPreview: makeHexPreview(target.record.data, 128)
+  };
+});
+
+ipcMain.handle("sprite:saveTable", async (_event, payload) => {
+  const asset = getAsset(payload?.nodeId);
+
+  if (!asset || asset.category !== "RenderSprite") {
+    throw new Error("Select a RenderSprite asset before saving.");
+  }
+
+  const spriteRecord = getSpriteRecord(asset);
+
+  if (!spriteRecord) {
+    throw new Error("RenderSprite data record was not found.");
+  }
+
+  const entries = Array.isArray(payload?.sprites) ? payload.sprites : [];
+  const nextData = Buffer.from(spriteRecord.data);
+  const updated = writeRenderSpriteEntries(nextData, entries);
+  nextData.copy(spriteRecord.data);
+  const serialized = currentSession.project.records[spriteRecord.index];
+
+  if (serialized) {
+    serialized.hexPreview = makeHexPreview(spriteRecord.data, 128);
+  }
+
+  if (asset.sprite) {
+    const sprites = parseRenderSprite(spriteRecord.data);
+    asset.sprite.count = sprites.length;
+    asset.sprite.first = sprites[0] ?? null;
+  }
+
+  await writeFile(currentSession.parsed.filePath, currentSession.parsed.buffer);
+
+  return {
+    updated,
+    hexPreview: makeHexPreview(spriteRecord.data, 128),
+    filePath: currentSession.parsed.filePath
+  };
+});
+
+ipcMain.handle("sprite:saveFontCharacters", async (_event, payload) => {
+  const asset = getAsset(payload?.nodeId);
+
+  if (!asset || asset.category !== "RenderSprite") {
+    throw new Error("Select a RenderSprite asset before saving font mapping.");
+  }
+
+  const characters = Array.isArray(payload?.characters) ? payload.characters : [];
+  await saveConfiguredSpriteFontCharacters(asset, characters);
+
+  return {
+    filePath: CONFIG_PATH,
+    characters
   };
 });
 
@@ -572,6 +735,95 @@ function getTextureData(asset) {
   return record.data;
 }
 
+function getDirectDdsPayload(dds, texture, expectedSize) {
+  if (dds.length < 128 || dds.toString("ascii", 0, 4) !== "DDS ") {
+    return null;
+  }
+
+  const height = dds.readUInt32LE(12);
+  const width = dds.readUInt32LE(16);
+  const fourCc = dds.toString("ascii", 84, 88).replace(/\0+$/u, "");
+  const dataOffset = fourCc === "DX10" ? 148 : 128;
+
+  if (width !== texture.width || height !== texture.height || dds.length < dataOffset) {
+    return null;
+  }
+
+  const payload = dds.subarray(dataOffset);
+  return payload.length === expectedSize ? payload : null;
+}
+
+async function writeTextureRecord(asset, record, encoded, sourceLabel) {
+  const expectedSize = getTextureDataSize(asset.texture);
+
+  if (expectedSize != null && encoded.length !== expectedSize) {
+    throw new Error(`${sourceLabel} import created ${encoded.length} bytes, expected ${expectedSize}.`);
+  }
+
+  if (encoded.length !== record.size) {
+    throw new Error(`${sourceLabel} import created ${encoded.length} bytes, but the HNK payload is ${record.size} bytes.`);
+  }
+
+  encoded.copy(record.data);
+  encoded.copy(currentSession.parsed.buffer, record.dataStart);
+  updateSerializedHexPreview(record.index);
+  await writeFile(currentSession.parsed.filePath, currentSession.parsed.buffer);
+}
+
+function makeTextureImportResult(asset, record, byteLength, mode) {
+  return {
+    canceled: false,
+    byteLength,
+    mode,
+    filePath: currentSession.parsed.filePath,
+    hexPreview: makeHexPreview(record.data, 128),
+    dataUrl: createTextureDataUrl(record.data, asset.texture)
+  };
+}
+
+function updateSerializedHexPreview(recordIndex) {
+  const serialized = currentSession.project.records[recordIndex];
+
+  if (serialized) {
+    const record = getRawRecord(recordIndex);
+    serialized.hexPreview = makeHexPreview(record.data, 128);
+  }
+}
+
+function getDatImportTarget(nodeId) {
+  const target = getExportTarget(nodeId);
+
+  if (!target) {
+    throw new Error("Nothing selected for DAT import.");
+  }
+
+  if (target.kind === "record") {
+    return target;
+  }
+
+  const asset = target.asset;
+
+  if (asset.texture?.dataRecordId != null) {
+    const record = getRawRecord(asset.texture.dataRecordId);
+    if (!record) {
+      throw new Error("Texture data record was not found.");
+    }
+
+    return { kind: "record", record, serialized: currentSession.project.records[record.index] };
+  }
+
+  if (asset.payloadRecordIds.length === 1) {
+    const record = getRawRecord(asset.payloadRecordIds[0]);
+    if (!record) {
+      throw new Error("Asset data record was not found.");
+    }
+
+    return { kind: "record", record, serialized: currentSession.project.records[record.index] };
+  }
+
+  throw new Error("DAT import needs a single target record. Select a child record instead.");
+}
+
 function getRawRecord(recordId) {
   return currentSession?.parsed.records[recordId] ?? null;
 }
@@ -632,6 +884,26 @@ function serializeGeometryForPreview(geometry) {
     faceCount: geometry.faces.length,
     vertexCount: geometry.vertices.length
   };
+}
+
+function createEmptyGeometryPreview() {
+  return {
+    vertices: [],
+    faces: [],
+    bounds: {
+      min: [0, 0, 0],
+      max: [0, 0, 0],
+      center: [0, 0, 0],
+      radius: 1
+    },
+    truncated: false,
+    faceCount: 0,
+    vertexCount: 0
+  };
+}
+
+function isMissingModelGeometryError(error) {
+  return /no vertex\/(?:index|display-list) data/iu.test(error?.message ?? "");
 }
 
 function getSkeletons() {
@@ -775,8 +1047,8 @@ function readExternalRawSync(rawPath) {
   return readFileSync(rawPath);
 }
 
-function createSpritePreview(asset, requestedIndex = 0) {
-  const spriteRecord = asset.payloadRecordIds.map((recordId) => getRawRecord(recordId)).find((record) => record?.type === 0x41007);
+function createSpritePreview(asset, requestedIndex = 0, textureAssetId = null) {
+  const spriteRecord = getSpriteRecord(asset);
 
   if (!spriteRecord) {
     return null;
@@ -785,31 +1057,96 @@ function createSpritePreview(asset, requestedIndex = 0) {
   const sprites = parseRenderSprite(spriteRecord.data);
   const selectedIndex = Math.max(0, Math.min(sprites.length - 1, Number(requestedIndex) || 0));
   const selectedSprite = sprites[selectedIndex];
-  const textureAsset = findTextureForSprite(asset.name);
+  const textureAsset = findTextureForSprite(asset.name, textureAssetId);
+  const textureOptions = getSpriteTextureOptions(asset.name);
 
   if (!selectedSprite || !textureAsset?.texture) {
-    return { spriteCount: sprites.length, sprites, selectedIndex, selectedSprite, dataUrl: null };
+    return {
+      spriteCount: sprites.length,
+      sprites,
+      selectedIndex,
+      selectedSprite,
+      texture: textureAsset ? serializeTextureOption(textureAsset) : null,
+      textureOptions,
+      fontCharacters: getConfiguredSpriteFontCharacters(asset),
+      dataUrl: null
+    };
   }
 
   const textureData = getTextureData(textureAsset);
   const crop = cropSpriteRgba(textureData, textureAsset.texture, selectedSprite);
+  const textureDataUrl = createTextureDataUrl(textureData, textureAsset.texture);
 
   return {
     spriteCount: sprites.length,
-    sprites: sprites.slice(0, 500),
+    sprites,
     selectedIndex,
     selectedSprite,
+    texture: serializeTextureOption(textureAsset),
+    textureOptions,
+    fontCharacters: getConfiguredSpriteFontCharacters(asset),
+    textureDataUrl,
     dataUrl: `data:image/png;base64,${encodeRgbaPng(crop.width, crop.height, crop.rgba).toString("base64")}`
   };
 }
 
-function findTextureForSprite(spriteName) {
-  const names = new Set([normalizeName(spriteName), normalizeName(`${spriteName}0`)]);
+function getSpriteRecord(asset) {
+  if (asset.sprite?.recordId != null) {
+    const record = getRawRecord(asset.sprite.recordId);
 
-  return currentSession.project.assets.find((asset) => asset.category === "TSETexture" && names.has(normalizeName(asset.name))) ?? null;
+    if (record) {
+      return record;
+    }
+  }
+
+  return asset.payloadRecordIds.map((recordId) => getRawRecord(recordId)).find((record) => record?.type === 0x41007) ?? null;
 }
 
-async function exportSpritesToDirectory(asset) {
+function findTextureForSprite(spriteName, textureAssetId = null) {
+  const textureAssets = getTextureAssets();
+
+  if (textureAssetId) {
+    const selected = textureAssets.find((asset) => asset.id === textureAssetId);
+
+    if (selected) {
+      return selected;
+    }
+  }
+
+  const names = new Set([normalizeName(spriteName), normalizeName(`${spriteName}0`)]);
+  const matched = textureAssets.find((asset) => names.has(normalizeName(asset.name)));
+
+  return matched ?? textureAssets[0] ?? null;
+}
+
+function getSpriteTextureOptions(spriteName) {
+  const names = new Set([normalizeName(spriteName), normalizeName(`${spriteName}0`)]);
+
+  return getTextureAssets()
+    .map((asset) => ({
+      ...serializeTextureOption(asset),
+      matched: names.has(normalizeName(asset.name))
+    }))
+    .sort((left, right) => Number(right.matched) - Number(left.matched) || left.label.localeCompare(right.label));
+}
+
+function getTextureAssets() {
+  return currentSession.project.assets.filter((asset) => asset.category === "TSETexture" && asset.texture?.dataRecordId != null);
+}
+
+function serializeTextureOption(asset) {
+  return {
+    id: asset.id,
+    name: asset.name,
+    folder: asset.folder,
+    label: `${asset.name} (${asset.texture.width}x${asset.texture.height} ${asset.texture.format})`,
+    width: asset.texture.width,
+    height: asset.texture.height,
+    format: asset.texture.format
+  };
+}
+
+async function exportSpritesToDirectory(asset, textureAssetId = null) {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: "Select folder for sprites",
     properties: ["openDirectory", "createDirectory"]
@@ -819,8 +1156,8 @@ async function exportSpritesToDirectory(asset) {
     return { canceled: true };
   }
 
-  const spriteRecord = asset.payloadRecordIds.map((recordId) => getRawRecord(recordId)).find((record) => record?.type === 0x41007);
-  const textureAsset = findTextureForSprite(asset.name);
+  const spriteRecord = getSpriteRecord(asset);
+  const textureAsset = findTextureForSprite(asset.name, textureAssetId);
 
   if (!spriteRecord || !textureAsset?.texture) {
     throw new Error("Sprite texture was not found.");
@@ -880,4 +1217,33 @@ async function saveConfiguredSoundsFolder(providerId, folderPath) {
     soundsFolder: folderPath
   };
   await writeConfig(config);
+}
+
+function getConfiguredSpriteFontCharacters(asset) {
+  const providersConfig = readConfig().providers ?? {};
+
+  for (const providerId of [currentSession.provider.id, ...(currentSession.provider.configAliases ?? [])]) {
+    const maps = providersConfig[providerId]?.renderSpriteCharsets ?? {};
+    const configured = maps[getSpriteConfigKey(asset)] ?? maps[asset.name];
+
+    if (configured) {
+      return configured;
+    }
+  }
+
+  return null;
+}
+
+async function saveConfiguredSpriteFontCharacters(asset, characters) {
+  const config = readConfig();
+  config.providers ??= {};
+  const providerConfig = config.providers[currentSession.provider.id] ?? {};
+  providerConfig.renderSpriteCharsets ??= {};
+  providerConfig.renderSpriteCharsets[getSpriteConfigKey(asset)] = characters;
+  config.providers[currentSession.provider.id] = providerConfig;
+  await writeConfig(config);
+}
+
+function getSpriteConfigKey(asset) {
+  return `${asset.folder || ""}/${asset.name}`;
 }
